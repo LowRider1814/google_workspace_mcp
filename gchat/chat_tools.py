@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _SENDER_CACHE_MAX_SIZE = 256
 _sender_name_cache: Dict[str, str] = {}
 _PEOPLE_BATCH_GET_MAX_RESOURCE_NAMES = 200
+_DM_MEMBERSHIP_MAX_CONCURRENT_FETCHES = 5
 _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES = 1
 _SEARCH_MESSAGES_SSL_RETRIES = 3
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
@@ -148,6 +149,7 @@ async def _resolve_dm_space_names(
     people_service,
     spaces: List[dict],
     user_google_email: str,
+    max_dm_spaces: Optional[int] = None,
 ) -> Dict[str, str]:
     """Resolve direct-message space names to the other participant's name."""
     dm_spaces = [
@@ -155,25 +157,38 @@ async def _resolve_dm_space_names(
         for space in spaces
         if space.get("spaceType") == "DIRECT_MESSAGE" and space.get("name")
     ]
+    if max_dm_spaces is not None:
+        dm_spaces = dm_spaces[: max(0, max_dm_spaces)]
     if not dm_spaces:
         return {}
 
     memberships_by_space: Dict[str, List[dict]] = {}
     user_ids = []
-    for space in dm_spaces:
+    membership_semaphore = asyncio.Semaphore(_DM_MEMBERSHIP_MAX_CONCURRENT_FETCHES)
+
+    async def fetch_memberships(space: dict) -> Tuple[str, List[dict]]:
         space_id = space["name"]
         try:
-            response = await asyncio.to_thread(
-                chat_service.spaces().members().list(parent=space_id).execute
-            )
+            async with membership_semaphore:
+                response = await asyncio.to_thread(
+                    lambda: chat_service.spaces()
+                    .members()
+                    .list(parent=space_id)
+                    .execute()
+                )
         except HttpError as e:
             logger.debug(f"Chat memberships lookup failed for {space_id}: {e}")
-            continue
+            return space_id, []
         except Exception as e:
             logger.debug(f"Unexpected error listing DM members for {space_id}: {e}")
-            continue
+            return space_id, []
 
-        memberships = response.get("memberships", [])
+        return space_id, response.get("memberships", [])
+
+    results = await asyncio.gather(*(fetch_memberships(space) for space in dm_spaces))
+    for space_id, memberships in results:
+        if not memberships:
+            continue
         memberships_by_space[space_id] = memberships
         for membership in memberships:
             member = membership.get("member", {})
@@ -272,9 +287,18 @@ async def list_spaces(
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
     resolve_dm_names: bool = False,
+    max_dm_spaces: Optional[int] = None,
 ) -> str:
     """
     Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+
+    Args:
+        page_size: Maximum number of spaces to request from Google Chat.
+        space_type: Which space type to list: "all", "room", or "dm".
+        resolve_dm_names: Whether to resolve direct-message spaces to participant names.
+        max_dm_spaces: Optional maximum number of returned DM spaces to resolve names
+            for. Defaults to None, which resolves all returned DM spaces when
+            resolve_dm_names is enabled.
 
     Returns:
         str: A formatted list of Google Chat spaces accessible to the user.
@@ -302,7 +326,12 @@ async def list_spaces(
 
     dm_names = {}
     has_dm_spaces = any(space.get("spaceType") == "DIRECT_MESSAGE" for space in spaces)
-    if resolve_dm_names and has_dm_spaces:
+    should_resolve_dm_names = (
+        resolve_dm_names
+        and has_dm_spaces
+        and (max_dm_spaces is None or max_dm_spaces > 0)
+    )
+    if should_resolve_dm_names:
         membership_chat_service = None
         people_service = None
         try:
@@ -321,7 +350,11 @@ async def list_spaces(
                 [CONTACTS_READONLY_SCOPE],
             )
             dm_names = await _resolve_dm_space_names(
-                membership_chat_service, people_service, spaces, user_google_email
+                membership_chat_service,
+                people_service,
+                spaces,
+                user_google_email,
+                max_dm_spaces=max_dm_spaces,
             )
         finally:
             if membership_chat_service:

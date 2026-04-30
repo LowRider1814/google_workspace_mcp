@@ -471,6 +471,11 @@ async def start_auth_flow(
         user_google_email: The user's specified Google email, if provided.
         service_name: The name of the Google service requiring auth (for user messages).
         redirect_uri: The URI Google will redirect to after authorization.
+        additional_scopes (Optional[List[str]]): A list of extra OAuth scope
+            strings to request when building the auth URL and credentials, for
+            example ["https://www.googleapis.com/auth/drive.readonly"]. Defaults
+            to None, which requests no extra scopes beyond the currently enabled
+            tool scopes.
 
     Returns:
         A formatted string containing guidance for the LLM/user.
