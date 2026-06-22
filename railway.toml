@@ -1,0 +1,21 @@
+# Railway deploy config — Google Workspace MCP (Abramsky)
+#
+# Build uses the repo Dockerfile. ALL runtime behavior (OAuth 2.1, scopes via
+# WORKSPACE_MCP_PERMISSIONS, external URL, redirect URI, persistence) is set
+# through service ENVIRONMENT VARIABLES in the Railway dashboard — never commit
+# secrets here. See DEPLOY_RUNBOOK.md for the exact variable list.
+#
+# The stock Dockerfile CMD is `uv run main.py --transport streamable-http`
+# (TOOLS/TOOL_TIER default empty), so permissions come from the
+# WORKSPACE_MCP_PERMISSIONS env var. No startCommand override here — the
+# Dockerfile's `sh -c` entrypoint makes overrides fragile.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
