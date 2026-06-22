@@ -24,7 +24,9 @@ RUN mkdir -p /app/store_creds \
     && chown -R app:app /app/store_creds \
     && chmod 755 /app/store_creds
 
-USER app
+# NOTE: Run as root (no `USER app`). Railway mounts persistent volumes owned by
+# root; a non-root process can't write tokens to the mounted creds dir. Running
+# as root keeps the volume writable. Single-tenant personal deploy — acceptable.
 
 # Expose port (use default of 8000 if PORT not set)
 EXPOSE 8000
@@ -40,6 +42,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 ENV TOOL_TIER=""
 ENV TOOLS=""
 
-# Use entrypoint for the base command and CMD for args
+# Use entrypoint for the base command and CMD for args.
+# `--no-sync`: skip uv's runtime environment re-validation. Without it, `uv run`
+# triggers a setuptools editable rebuild that scans /app and tries to write into
+# the volume mounted at /app/store_creds (root-owned lost+found) -> crash on boot.
 ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]
+CMD ["uv run --no-sync main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]
