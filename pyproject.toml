@@ -124,7 +124,7 @@ py-modules = [ "fastmcp_server", "main"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["tests*", "docs*", "build", "dist"]
+exclude = ["tests*", "docs*", "build", "dist", "store_creds*"]
 
 [tool.pytest.ini_options]
 addopts = "--ignore=tests/gappsscript/manual_test.py"
